@@ -1,0 +1,24 @@
+name: Test B+ tree implementation
+
+on:
+    push:
+        branches: ["main"]
+    pull_request:
+        branches: ["main"]
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Go
+              uses: actions/setup-go@v5
+              with:
+                  # Specify the Go version.
+                  # go-version-file: go.mod can also be used to read the version from your go.mod file
+                  go-version-file: "go.mod"
+
+            - name: Run Go tests
+              run: go test -v ./...
