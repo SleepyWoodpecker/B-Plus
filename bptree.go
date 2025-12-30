@@ -48,6 +48,7 @@ func NewNode[T cmp.Ordered]() *Node[T] {
 		Pointers: make([]interface{}, ORDER),
 		Keys:     make([]T, MAX_KEYS_PER_NODE),
 		NumKeys:  0,
+		IsLeaf:   false,
 	}
 	for i := range node.Pointers {
 		node.Pointers[i] = nil
@@ -116,17 +117,114 @@ func (t *Tree[T]) Insert(record Record[T]) {
 		newNode.NumKeys++
 	}
 
-	newRoot := NewNode[T]()
-	newRoot.Keys[0] = newNode.Keys[0]
-	newRoot.NumKeys++
-	newRoot.IsLeaf = false
+	if record, ok := newNode.Pointers[0].(Record[T]); ok {
+		t.insertIntoParentNode(nodeToInsertValue, newNode, nodeToInsertValue.Parent, record.GetHashableVal())
+	} else {
+		panic("No hashable value for the new node")
+	}
+}
 
-	nodeToInsertValue.Parent = newRoot
-	newNode.Parent = newRoot
-	newRoot.Pointers[0] = nodeToInsertValue
-	newRoot.Pointers[1] = newNode
+// assume that left is the original node that was not split before this
+func (t *Tree[T]) insertIntoParentNode(left *Node[T], right *Node[T], parent *Node[T], separator T) {
+	// since left was the original node, if it does not have a parent node, it must be the original root
+	if parent == nil {
+		newRoot := NewNode[T]()
+		newRoot.Keys[0] = separator
+		newRoot.NumKeys++
+		newRoot.IsLeaf = false
 
-	t.Root = newRoot
+		left.Parent = newRoot
+		right.Parent = newRoot
+
+		newRoot.Pointers[0] = left
+		newRoot.Pointers[1] = right
+
+		t.Root = newRoot
+		return
+	}
+
+	// find index of left node
+	// if the number keys has not yet been maxed, the index of the key to modify is idx
+	foundIdx := t.getNodeIndexInParent(left, parent)
+	if foundIdx == -1 {
+		panic("Could not find node idx")
+	}
+
+	indexToInsertNewNode := foundIdx + 1
+	if parent.NumKeys < MAX_KEYS_PER_NODE {
+		// copy all the keys over
+		for i := parent.NumKeys; i >= indexToInsertNewNode; i-- {
+			parent.Keys[i] = parent.Keys[i-1]
+			parent.Pointers[i+1] = parent.Pointers[i]
+		}
+
+		parent.Keys[indexToInsertNewNode-1] = separator
+		parent.Pointers[indexToInsertNewNode] = right
+		parent.NumKeys++
+
+		right.Parent = parent
+
+		return
+	}
+
+	// if not, split the parent node
+	// when trying to split a nonleaf node, there will be one more pointer than key
+	tempKeys := make([]T, MAX_NONLEAF_POINTERS)
+	tempPointers := make([]interface{}, MAX_NONLEAF_POINTERS+1)
+
+	for i, j := 0, 0; i < MAX_NONLEAF_POINTERS+1; i++ {
+		if i == indexToInsertNewNode {
+			tempPointers[i] = right
+			continue
+		}
+		tempPointers[i] = parent.Pointers[j]
+		j++
+	}
+
+	for i, j := 0, 0; i < MAX_NONLEAF_POINTERS; i++ {
+		if i == indexToInsertNewNode-1 {
+			if record, ok := right.Pointers[0].(Record[T]); ok {
+				tempKeys[i] = record.GetHashableVal()
+				continue
+			}
+		}
+
+		tempKeys[i] = parent.Keys[j]
+		j++
+	}
+
+	for i := range MAX_LEAF_POINTERS {
+		if i < LEAF_SPLIT_INDEX {
+			parent.Keys[i] = tempKeys[i]
+			parent.Pointers[i] = tempPointers[i]
+		} else {
+			parent.Pointers[i] = nil
+			parent.NumKeys--
+		}
+	}
+	parent.Pointers[LEAF_SPLIT_INDEX] = tempPointers[LEAF_SPLIT_INDEX]
+	nodeSeparator := tempKeys[LEAF_SPLIT_INDEX]
+
+	newNode := NewNode[T]()
+	for i, j := 0, LEAF_SPLIT_INDEX+1; j < MAX_NONLEAF_POINTERS+1; i, j = i+1, j+1 {
+		if j < MAX_NONLEAF_POINTERS {
+			newNode.Keys[i] = tempKeys[j]
+			newNode.NumKeys++
+		}
+		newNode.Pointers[i] = tempPointers[j]
+	}
+
+	t.insertIntoParentNode(parent, newNode, parent.Parent, nodeSeparator)
+}
+
+func (t *Tree[T]) getNodeIndexInParent(node *Node[T], parent *Node[T]) int {
+	for i, ptr := range parent.Pointers {
+		if ptr == node {
+			return i
+		}
+	}
+
+	return -1
 }
 
 func (t *Tree[T]) FindNodeToInsertValue(record Record[T]) *Node[T] {
@@ -149,7 +247,7 @@ func (t *Tree[T]) FindNodeToInsertValue(record Record[T]) *Node[T] {
 		if node, ok := currentNode.Pointers[ptrIdx].(*Node[T]); ok {
 			currentNode = node
 		} else {
-			panic("Found a non node in a nonleaf pointer")
+			panic(fmt.Sprintf("Found a non node in a nonleaf pointer: %+v, \n\n%s\n", currentNode, t))
 		}
 	}
 
@@ -175,7 +273,7 @@ func findInsertionIndex[T cmp.Ordered](currentSearchNode *Node[T], record Record
 		}
 	}
 
-	return len(currentSearchNode.Keys)
+	return currentSearchNode.NumKeys
 }
 
 // struct for printing
@@ -211,22 +309,23 @@ func (t *Tree[T]) String() string {
 
 		// if not a leaf, print the keys
 		if !top.IsLeaf {
-			for i := range top.NumKeys {
-				treeString += fmt.Sprintf("%v ", top.Keys[i])
-			}
+			for i := range top.NumKeys + 1 {
+				if i < top.NumKeys {
+					treeString += fmt.Sprintf("%v ", top.Keys[i])
 
-			// add children to the queue
-			for _, child := range top.Pointers {
-				if node, ok := child.(*Node[T]); ok {
+				}
+				if childNode, ok := top.Pointers[i].(*Node[T]); ok {
 					queue = append(
 						queue,
 						&nodeWithDepth[T]{
-							node,
+							childNode,
 							top.Depth + 1,
 						},
 					)
 				}
+
 			}
+
 		} else { // if is a leaf, print the values
 			for i := range top.NumKeys {
 				if formattedRecord, ok := top.Pointers[i].(Record[T]); ok {
