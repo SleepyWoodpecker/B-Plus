@@ -1,10 +1,11 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 )
 
-func TestTree(t *testing.T) {
+func TestTreeInsert(t *testing.T) {
 
 	var tests = []struct {
 		input  []int
@@ -29,6 +30,37 @@ func TestTree(t *testing.T) {
 		stringRep := tree.String()
 		if stringRep != test.output {
 			t.Errorf("Format incorrect:\ngot:\n%s\nexpected:\n%s\n", stringRep, test.output)
+		}
+	}
+}
+
+// test point and range lookups in the tree
+func TestTreeLookup(t *testing.T) {
+	tree := NewTree[int]()
+	vals := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	for _, val := range vals {
+		tree.Insert(NewIntRecord(val))
+	}
+
+	var tests = []struct {
+		val      Record[int]
+		isNotNil bool
+	}{
+		{NewIntRecord(10), true},
+		{NewIntRecord(11), false},
+	}
+
+	for _, test := range tests {
+		record := tree.FindPoint(test.val.GetHashableVal())
+
+		if test.isNotNil {
+			if record == nil {
+				t.Errorf("Expected query to be non-nil, but got nil\n")
+			} else if !reflect.DeepEqual(test.val, record) {
+				t.Errorf("Expected: %+v, Got: %+v\n", test.val, record)
+			}
+		} else if !test.isNotNil && record != nil {
+			t.Errorf("Expected query to be nil, but returned nil")
 		}
 	}
 }

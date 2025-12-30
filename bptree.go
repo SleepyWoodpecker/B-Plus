@@ -66,7 +66,7 @@ func (t *Tree[T]) Insert(record Record[T]) {
 		t.Root.Parent = nil
 	}
 
-	nodeToInsertValue := t.FindNodeToInsertValue(record)
+	nodeToInsertValue := t.findNode(record.GetHashableVal())
 	indexToInsertVal := findInsertionIndex(nodeToInsertValue, record)
 
 	if nodeToInsertValue.NumKeys < MAX_KEYS_PER_NODE {
@@ -110,6 +110,10 @@ func (t *Tree[T]) Insert(record Record[T]) {
 
 	newNode := NewNode[T]()
 	newNode.IsLeaf = true
+
+	// make the old node point to the new node with the last pointer
+	// this will help support range queries
+	nodeToInsertValue.Pointers[MAX_LEAF_POINTERS] = newNode
 
 	for i, j := 0, LEAF_SPLIT_INDEX+1; j < MAX_NONLEAF_POINTERS; i, j = i+1, j+1 {
 		newNode.Keys[i] = tempKeys[j]
@@ -227,13 +231,14 @@ func (t *Tree[T]) getNodeIndexInParent(node *Node[T], parent *Node[T]) int {
 	return -1
 }
 
-func (t *Tree[T]) FindNodeToInsertValue(record Record[T]) *Node[T] {
+// Find node that would contain the desired value
+// This does not guarantee that the value is found, only that the desired node is found
+func (t *Tree[T]) findNode(val T) *Node[T] {
 	if t.Root == nil {
 		panic("Tree is empty")
 	}
 
 	var currentNode *Node[T] = t.Root
-	val := record.GetHashableVal()
 
 	for !currentNode.IsLeaf {
 		ptrIdx := currentNode.NumKeys
@@ -274,6 +279,28 @@ func findInsertionIndex[T cmp.Ordered](currentSearchNode *Node[T], record Record
 	}
 
 	return currentSearchNode.NumKeys
+}
+
+// function to search for an item using equality
+func (t *Tree[T]) FindPoint(val T) Record[T] {
+	targetNode := t.findNode(val)
+	return findItemIndex(targetNode, val)
+}
+
+// if there is a match with the item, return the associated record
+// if there is no match, return nil
+func findItemIndex[T cmp.Ordered](currentNode *Node[T], val T) Record[T] {
+	if !currentNode.IsLeaf {
+		panic("Cannot find insertion index for something that is not a child node")
+	}
+
+	for _, ptr := range currentNode.Pointers {
+		if record, ok := ptr.(Record[T]); ok && record.GetHashableVal() == val {
+			return record
+		}
+	}
+
+	return nil
 }
 
 // struct for printing
