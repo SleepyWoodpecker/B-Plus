@@ -345,21 +345,43 @@ func (t *Tree[T]) Delete(val T) bool {
 		panic("Could not find index of node in parent")
 	}
 
-	deleteCleanup(targetNode, targetNodeIdxInParent)
+	t.deleteCleanup(targetNode, targetNodeIdxInParent)
 	return true
 }
 
-func deleteFromNonLeaf[T cmp.Ordered](targetNode *Node[T], targetNodeIdxInParent int) {
+func (t *Tree[T]) deleteFromNonLeaf(targetNode *Node[T], targetNodeIdxInParent int) {
 	removeKeyAndPointerFromNonLeaf(targetNode, targetNodeIdxInParent)
 
 	if targetNode.NumKeys >= MIN_NONLEAF_KEYS {
 		return
 	}
 
-	deleteCleanup(targetNode, targetNodeIdxInParent)
+	// handle the case where the node that just had its key removed is its parent
+	// if the parent node has less than the min non-leaf keys, it must mean that there is only one child left
+	// by design, it is always the left most child
+	if targetNode.Parent == nil {
+		if node, ok := targetNode.Pointers[0].(*Node[T]); ok {
+			t.Root = node
+		}
+		return
+	}
+
+	// after removal, recalculate the idx
+	targetNodeIdxInParent = -1
+	for i := 0; i <= targetNode.Parent.NumKeys; i++ {
+		if targetNode.Parent.Pointers[i] == targetNode {
+			targetNodeIdxInParent = i
+			break
+		}
+	}
+	if targetNodeIdxInParent == -1 {
+		panic("Could not find node in parent")
+	}
+
+	t.deleteCleanup(targetNode, targetNodeIdxInParent)
 }
 
-func deleteCleanup[T cmp.Ordered](targetNode *Node[T], targetNodeIdxInParent int) {
+func (t *Tree[T]) deleteCleanup(targetNode *Node[T], targetNodeIdxInParent int) {
 	var neighborNodeIdx, separatorKeyIdx int
 	var separator T
 	var neighborNode *Node[T]
@@ -381,9 +403,9 @@ func deleteCleanup[T cmp.Ordered](targetNode *Node[T], targetNodeIdxInParent int
 
 	if targetNode.NumKeys+neighborNode.NumKeys <= MAX_KEYS_PER_NODE {
 		if targetNodeIdxInParent != 0 {
-			coalesce(neighborNode, targetNode, targetNodeIdxInParent, targetNode.Parent, separator)
+			t.coalesce(neighborNode, targetNode, targetNodeIdxInParent, targetNode.Parent, separator)
 		} else {
-			coalesce(targetNode, neighborNode, neighborNodeIdx, targetNode.Parent, separator)
+			t.coalesce(targetNode, neighborNode, neighborNodeIdx, targetNode.Parent, separator)
 		}
 
 		return
@@ -411,7 +433,7 @@ func removeKeyAndPointerFromNonLeaf[T cmp.Ordered](node *Node[T], targetNodeIdxI
 	node.NumKeys--
 }
 
-func coalesce[T cmp.Ordered](left *Node[T], right *Node[T], rightIdx int, parent *Node[T], separator T) {
+func (t *Tree[T]) coalesce(left *Node[T], right *Node[T], rightIdx int, parent *Node[T], separator T) {
 	// move all records that were in the right node into the left node
 
 	// if it was a leaf, just copy directly
@@ -429,7 +451,7 @@ func coalesce[T cmp.Ordered](left *Node[T], right *Node[T], rightIdx int, parent
 			left.Pointers[i] = right.Pointers[j]
 
 			// adjust them all to point to the same parent
-			if l, ok := left.Pointers[i].(*Node[T]); ok {
+			if l, ok := left.Pointers[i].(*Node[T]); left.Pointers[i] != nil && ok {
 				l.Parent = left.Parent
 			} else {
 				panic("Did not insert a node")
@@ -440,11 +462,10 @@ func coalesce[T cmp.Ordered](left *Node[T], right *Node[T], rightIdx int, parent
 
 		// copy over the final pointer
 		left.Pointers[left.NumKeys] = right.Pointers[right.NumKeys]
-
 	}
 
-	// now remove the key from the top
-	deleteFromNonLeaf(parent, rightIdx)
+	// now remove the right side from the parent node
+	t.deleteFromNonLeaf(parent, rightIdx)
 }
 
 func redistributeNodes[T cmp.Ordered](left *Node[T], right *Node[T], parent *Node[T], targetNodeIdx int, separatorIdx int) {
