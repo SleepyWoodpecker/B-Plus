@@ -389,7 +389,7 @@ func deleteCleanup[T cmp.Ordered](targetNode *Node[T], targetNodeIdxInParent int
 		return
 	}
 
-	redistributeNodes[T]()
+	redistributeNodes(targetNode, neighborNode, targetNode.Parent, targetNodeIdxInParent, separatorKeyIdx)
 }
 
 func removeKeyAndPointerFromLeaf[T cmp.Ordered](node *Node[T], recordToDeleteIdx int) {
@@ -447,7 +447,70 @@ func coalesce[T cmp.Ordered](left *Node[T], right *Node[T], rightIdx int, parent
 	deleteFromNonLeaf(parent, rightIdx)
 }
 
-func redistributeNodes[T cmp.Ordered]() {}
+func redistributeNodes[T cmp.Ordered](left *Node[T], right *Node[T], parent *Node[T], targetNodeIdx int, separatorIdx int) {
+	if left.IsLeaf {
+		// if left node is the one that needs more entries
+		// put the first entry of the right into the left
+		if targetNodeIdx == 0 {
+			left.Keys[left.NumKeys] = right.Keys[0]
+			left.Pointers[left.NumKeys] = right.Pointers[0]
+			left.NumKeys++
+
+			// move all entries up
+			for i := 1; i < right.NumKeys; i++ {
+				right.Keys[i-1] = right.Keys[i]
+				right.Pointers[i-1] = right.Pointers[i]
+			}
+			right.NumKeys--
+		} else { // put the last entry of the left into the right
+			// shift the right keys forward
+			for i := 0; i <= right.NumKeys; i++ {
+				right.Keys[i+1] = right.Keys[i]
+				right.Pointers[i+1] = right.Pointers[i]
+			}
+			right.NumKeys++
+
+			right.Keys[0] = left.Keys[left.NumKeys-1]
+			right.Pointers[0] = left.Pointers[left.NumKeys-1]
+			left.NumKeys--
+		}
+
+		// adjust the separator on top
+		parent.Keys[separatorIdx] = right.Keys[0]
+	} else {
+		// TODO: untested
+		if targetNodeIdx == 0 { // move the key into the left node
+			left.Keys[left.NumKeys] = parent.Keys[separatorIdx]
+			left.NumKeys++
+			left.Pointers[left.NumKeys] = right.Pointers[0]
+
+			parent.Keys[separatorIdx] = right.Keys[0]
+
+			for i := 1; i < right.NumKeys; i++ {
+				right.Keys[i-1] = right.Keys[i]
+				right.Pointers[i-1] = right.Pointers[i]
+			}
+			// move the last pointer over, since there is always one more pointer than key
+			right.Pointers[right.NumKeys] = right.Pointers[right.NumKeys+1]
+			right.NumKeys--
+		} else {
+			// move all the right items one position forward
+			for i := 0; i < right.NumKeys; i++ {
+				right.Keys[i+1] = right.Keys[i]
+				right.Pointers[i+1] = right.Pointers[i]
+			}
+			// move the last pointer as well
+			right.Pointers[right.NumKeys+1] = right.Pointers[right.NumKeys]
+
+			right.Keys[0] = parent.Keys[separatorIdx]
+			right.Pointers[0] = left.Pointers[left.NumKeys]
+			right.NumKeys++
+
+			parent.Keys[separatorIdx] = left.Keys[left.NumKeys-1]
+			left.NumKeys--
+		}
+	}
+}
 
 // struct for printing
 type nodeWithDepth[T cmp.Ordered] struct {
