@@ -11,6 +11,8 @@ var (
 	MAX_LEAF_POINTERS    = MAX_KEYS_PER_NODE
 	LEAF_SPLIT_INDEX     = MAX_LEAF_POINTERS / 2
 	MAX_NONLEAF_POINTERS = ORDER
+	MIN_NONLEAF_KEYS     = MAX_KEYS_PER_NODE / 2
+	MIN_LEAF_KEYS        = ORDER / 2
 )
 
 // exceptions
@@ -215,7 +217,12 @@ func (t *Tree[T]) insertIntoParentNode(left *Node[T], right *Node[T], parent *No
 			newNode.Keys[i] = tempKeys[j]
 			newNode.NumKeys++
 		}
+
+		// some issue abuout not setting parent
 		newNode.Pointers[i] = tempPointers[j]
+		if nn, ok := newNode.Pointers[i].(*Node[T]); ok {
+			nn.Parent = newNode
+		}
 	}
 
 	t.insertIntoParentNode(parent, newNode, parent.Parent, nodeSeparator)
@@ -284,24 +291,163 @@ func findInsertionIndex[T cmp.Ordered](currentSearchNode *Node[T], record Record
 // function to search for an item using equality
 func (t *Tree[T]) FindPoint(val T) Record[T] {
 	targetNode := t.findNode(val)
-	return findItemIndex(targetNode, val)
+	record, _ := findItemIndex(targetNode, val)
+	return record
 }
 
 // if there is a match with the item, return the associated record
 // if there is no match, return nil
-func findItemIndex[T cmp.Ordered](currentNode *Node[T], val T) Record[T] {
+func findItemIndex[T cmp.Ordered](currentNode *Node[T], val T) (Record[T], int) {
 	if !currentNode.IsLeaf {
 		panic("Cannot find insertion index for something that is not a child node")
 	}
 
-	for _, ptr := range currentNode.Pointers {
+	for i, ptr := range currentNode.Pointers {
 		if record, ok := ptr.(Record[T]); ok && record.GetHashableVal() == val {
-			return record
+			return record, i
 		}
 	}
 
-	return nil
+	return nil, -1
 }
+
+func (t *Tree[T]) Delete(val T) bool {
+	// first confirm that the desired value exists
+	targetNode := t.findNode(val)
+
+	// if the value exists, locate its current node,
+	// find the index of the record in the node and remove the value from the node
+
+	recordToDelete, recordToDeleteIdxInNode := findItemIndex(targetNode, val)
+	if recordToDelete == nil {
+		return false
+	}
+	removeKeyAndPointerFromLeaf(targetNode, recordToDeleteIdxInNode)
+
+	if t.Root == targetNode {
+		return true
+	}
+
+	if targetNode.NumKeys >= MIN_LEAF_KEYS {
+		return true
+	}
+
+	targetNodeIdxInParent := -1
+	// in a non-leaf node, the number of pointers is equal to numKeys + 1
+	for i := 0; i < targetNode.Parent.NumKeys+1; i++ {
+		if targetNode.Parent.Pointers[i] == targetNode {
+			targetNodeIdxInParent = i
+			break
+		}
+	}
+
+	if targetNodeIdxInParent == -1 {
+		panic("Could not find index of node in parent")
+	}
+
+	deleteCleanup(targetNode, targetNodeIdxInParent)
+	return true
+}
+
+func deleteFromNonLeaf[T cmp.Ordered](targetNode *Node[T], targetNodeIdxInParent int) {
+	removeKeyAndPointerFromNonLeaf(targetNode, targetNodeIdxInParent)
+
+	if targetNode.NumKeys >= MIN_NONLEAF_KEYS {
+		return
+	}
+
+	deleteCleanup(targetNode, targetNodeIdxInParent)
+}
+
+func deleteCleanup[T cmp.Ordered](targetNode *Node[T], targetNodeIdxInParent int) {
+	var neighborNodeIdx, separatorKeyIdx int
+	var separator T
+	var neighborNode *Node[T]
+
+	if targetNodeIdxInParent != 0 {
+		neighborNodeIdx = targetNodeIdxInParent - 1
+		separatorKeyIdx = neighborNodeIdx
+	} else {
+		neighborNodeIdx = 1
+		separatorKeyIdx = 0
+	}
+
+	if nbn, ok := targetNode.Parent.Pointers[neighborNodeIdx].(*Node[T]); ok {
+		neighborNode = nbn
+		separator = targetNode.Parent.Keys[separatorKeyIdx]
+	} else {
+		panic(fmt.Sprintf("Neighbor node was invalid: %T", targetNode.Parent.Pointers[neighborNodeIdx]))
+	}
+
+	if targetNode.NumKeys+neighborNode.NumKeys <= MAX_KEYS_PER_NODE {
+		if targetNodeIdxInParent != 0 {
+			coalesce(neighborNode, targetNode, targetNodeIdxInParent, targetNode.Parent, separator)
+		} else {
+			coalesce(targetNode, neighborNode, neighborNodeIdx, targetNode.Parent, separator)
+		}
+
+		return
+	}
+
+	redistributeNodes[T]()
+}
+
+func removeKeyAndPointerFromLeaf[T cmp.Ordered](node *Node[T], recordToDeleteIdx int) {
+	for i := recordToDeleteIdx; i < node.NumKeys-1; i++ {
+		node.Keys[i] = node.Keys[i+1]
+		node.Pointers[i] = node.Pointers[i+1]
+	}
+
+	node.NumKeys--
+}
+
+func removeKeyAndPointerFromNonLeaf[T cmp.Ordered](node *Node[T], targetNodeIdxInParent int) {
+	// stop at NumKeys here since targetNodeIdx is the pointer index and the total number of pointers == node.NumKeys
+	for i := targetNodeIdxInParent; i < node.NumKeys; i++ {
+		node.Keys[i-1] = node.Keys[i]
+		node.Pointers[i] = node.Pointers[i+1]
+	}
+
+	node.NumKeys--
+}
+
+func coalesce[T cmp.Ordered](left *Node[T], right *Node[T], rightIdx int, parent *Node[T], separator T) {
+	// move all records that were in the right node into the left node
+
+	// if it was a leaf, just copy directly
+	if left.IsLeaf {
+		for i, j := left.NumKeys, 0; j < right.NumKeys; i, j = i+1, j+1 {
+			left.Keys[i] = right.Keys[j]
+			left.Pointers[i] = right.Pointers[j]
+			left.NumKeys++
+		}
+	} else {
+		left.Keys[left.NumKeys] = separator
+		left.NumKeys++
+		for i, j := left.NumKeys, 0; j < right.NumKeys; i, j = i+1, j+1 {
+			left.Keys[i] = right.Keys[j]
+			left.Pointers[i] = right.Pointers[j]
+
+			// adjust them all to point to the same parent
+			if l, ok := left.Pointers[i].(*Node[T]); ok {
+				l.Parent = left.Parent
+			} else {
+				panic("Did not insert a node")
+			}
+
+			left.NumKeys++
+		}
+
+		// copy over the final pointer
+		left.Pointers[left.NumKeys] = right.Pointers[right.NumKeys]
+
+	}
+
+	// now remove the key from the top
+	deleteFromNonLeaf(parent, rightIdx)
+}
+
+func redistributeNodes[T cmp.Ordered]() {}
 
 // struct for printing
 type nodeWithDepth[T cmp.Ordered] struct {
