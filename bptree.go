@@ -68,6 +68,11 @@ func (t *Tree[T]) Insert(record Record[T]) {
 		t.Root.Parent = nil
 	}
 
+	// do not make an additional insertion if the node already exists
+	if r := t.FindPoint(record.GetHashableVal()); r != nil {
+		return
+	}
+
 	nodeToInsertValue := t.findNode(record.GetHashableVal())
 	indexToInsertVal := findInsertionIndex(nodeToInsertValue, record)
 
