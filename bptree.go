@@ -256,7 +256,7 @@ func (t *Tree[T]) findNode(val T) *Node[T] {
 	for !currentNode.IsLeaf {
 		ptrIdx := currentNode.NumKeys
 		// find the right key
-		for i, key := range currentNode.Keys {
+		for i, key := range currentNode.Keys[:currentNode.NumKeys] {
 			if val < key {
 				ptrIdx = i
 				break
