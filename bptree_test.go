@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -62,6 +63,70 @@ func TestTreeLookup(t *testing.T) {
 			}
 		} else if !test.isNotNil && record != nil {
 			t.Errorf("Expected query to be nil, but returned nil")
+		}
+	}
+}
+
+func TestTreeRangeLookup(t *testing.T) {
+	tree := NewTree[int]()
+	vals := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	for _, val := range vals {
+		tree.Insert(NewIntRecord(val))
+	}
+
+	var tests = []struct {
+		low    int
+		high   int
+		intArr []int
+	}{
+		{2, 6, []int{2, 3, 4, 5}},
+		{6, 20, []int{6, 7, 8, 9, 10}},
+	}
+
+	for _, test := range tests {
+		record := tree.FindRange(test.low, test.high)
+
+		rangeRes := make([]int, 0)
+
+		for rec := record.Next(); rec != nil; rec = record.Next() {
+			rangeRes = append(rangeRes, rec.GetHashableVal())
+		}
+
+		if !slices.Equal(test.intArr, rangeRes) {
+			t.Errorf("Expected: %+v, Got: %+v\n", test.intArr, rangeRes)
+		}
+	}
+}
+
+func TestDeletionAndRangeLookup(t *testing.T) {
+	tree := NewTree[int]()
+	vals := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	for _, val := range vals {
+		tree.Insert(NewIntRecord(val))
+	}
+
+	var tests = []struct {
+		toDelete int
+		low      int
+		high     int
+		intArr   []int
+	}{
+		{6, 5, 20, []int{5, 7, 8, 9, 10}},
+	}
+
+	for _, test := range tests {
+		tree.Delete(test.toDelete)
+
+		record := tree.FindRange(test.low, test.high)
+
+		rangeRes := make([]int, 0)
+
+		for rec := record.Next(); rec != nil; rec = record.Next() {
+			rangeRes = append(rangeRes, rec.GetHashableVal())
+		}
+
+		if !slices.Equal(test.intArr, rangeRes) {
+			t.Errorf("Expected: %+v, Got: %+v\n", test.intArr, rangeRes)
 		}
 	}
 }

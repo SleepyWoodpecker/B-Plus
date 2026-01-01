@@ -105,14 +105,11 @@ func (t *Tree[T]) Insert(record Record[T]) {
 	}
 
 	// put the keys and pointers into the original node
-	for i := range MAX_LEAF_POINTERS {
-		if i <= LEAF_SPLIT_INDEX {
-			nodeToInsertValue.Keys[i] = tempKeys[i]
-			nodeToInsertValue.Pointers[i] = tempPointers[i]
-		} else {
-			nodeToInsertValue.Pointers[i] = nil
-			nodeToInsertValue.NumKeys--
-		}
+	nodeToInsertValue.NumKeys = 0
+	for i := range LEAF_SPLIT_INDEX + 1 {
+		nodeToInsertValue.Keys[i] = tempKeys[i]
+		nodeToInsertValue.Pointers[i] = tempPointers[i]
+		nodeToInsertValue.NumKeys++
 	}
 
 	newNode := NewNode[T]()
@@ -127,6 +124,10 @@ func (t *Tree[T]) Insert(record Record[T]) {
 		newNode.Pointers[i] = tempPointers[j]
 		newNode.NumKeys++
 	}
+
+	// set the last pointers to make a linked list
+	newNode.Pointers[MAX_LEAF_POINTERS] = nodeToInsertValue.Pointers[MAX_LEAF_POINTERS]
+	nodeToInsertValue.Pointers[MAX_LEAF_POINTERS] = newNode
 
 	if record, ok := newNode.Pointers[0].(Record[T]); ok {
 		t.insertIntoParentNode(nodeToInsertValue, newNode, nodeToInsertValue.Parent, record.GetHashableVal())
@@ -300,6 +301,53 @@ func (t *Tree[T]) FindPoint(val T) Record[T] {
 	return record
 }
 
+// find range of values that satisfy low <= x < high
+func (t *Tree[T]) FindRange(low T, high T) Iterator[T] {
+	// find lower bound
+	lowerNode, lowNodeIdx := t.findNodeAndIdx(
+		low,
+		func(left T, right T) bool {
+			return left >= right
+		},
+	)
+
+	endNode, endNodeIdx := t.findNodeAndIdx(
+		high,
+		func(left T, right T) bool {
+			return left >= right
+		},
+	)
+
+	return &NumIntRecordIterator[T]{
+		IteratorEnd:    endNode,
+		IteratorEndIdx: endNodeIdx,
+
+		CurrentIdx:   lowNodeIdx,
+		CurrentNode:  lowerNode,
+		isFirstEntry: true,
+	}
+
+}
+
+func (t *Tree[T]) findNodeAndIdx(val T, cmpFunc func(T, T) bool) (*Node[T], int) {
+	node := t.findNode(val)
+
+	if !node.IsLeaf {
+		panic("Found node is not a leaf node")
+	}
+
+	for i := 0; i < node.NumKeys; i++ {
+		if r, ok := node.Pointers[i].(Record[T]); ok {
+			if cmpFunc(r.GetHashableVal(), val) {
+				return node, i
+			}
+		}
+	}
+
+	// if all the way at the end, it means that the start / end marker is all the way at the end of the tree
+	return node, node.NumKeys
+}
+
 // if there is a match with the item, return the associated record
 // if there is no match, return nil
 func findItemIndex[T cmp.Ordered](currentNode *Node[T], val T) (Record[T], int) {
@@ -448,6 +496,9 @@ func (t *Tree[T]) coalesce(left *Node[T], right *Node[T], rightIdx int, parent *
 			left.Pointers[i] = right.Pointers[j]
 			left.NumKeys++
 		}
+
+		// set up for the removal of the right entry from the linked list
+		left.Pointers[MAX_LEAF_POINTERS] = right.Pointers[MAX_LEAF_POINTERS]
 	} else {
 		left.Keys[left.NumKeys] = separator
 		left.NumKeys++
